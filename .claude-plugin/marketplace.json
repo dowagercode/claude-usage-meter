@@ -1,0 +1,13 @@
+{
+  "name": "usage-meter",
+  "owner": {
+    "name": "dowagercode"
+  },
+  "description": "A live plan-usage panel for Claude Code",
+  "plugins": [
+    {
+      "name": "usage-meter",
+      "source": "./"
+    }
+  ]
+}

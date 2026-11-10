@@ -1,0 +1,11 @@
+{
+  "name": "usage-meter",
+  "version": "0.1.0",
+  "description": "A Claude Code panel with your plan usage, refreshed every minute, and a moving graph. Works in the terminal and the desktop app.",
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "dowagercode"
+  },
+  "repository": "https://github.com/dowagercode/claude-usage-meter"
+}
