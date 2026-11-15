@@ -11,6 +11,8 @@ Updates every minute · last reading 1 min ago
    resets in 3h 31m
 ● Weekly   ░░░░░░░░░░░░░░░░ 2%
    resets in 4d 11h
+● Fable    █████░░░░░░░░░░░ 32.9%
+   weekly, resets in 1d 3h
 ● Context  ██░░░░░░░░░░░░░░ 10.8%
    this session, ~108k tokens
 
@@ -24,6 +26,8 @@ Updates every minute · last reading 1 min ago
 Bonus stats
 Burn rate (5-hour): +24.0% per hour
 Runway: hits 100% in about 3h 16m at this pace
+Fable burn rate (weekly): +6.0% per hour
+Fable runway: hits 100% in about 11h at this pace
 Context growth: +12.0% per hour
 Session cost: $2.45 (+$1.45 while watching, $3.00/h)
 ```
@@ -31,11 +35,12 @@ Session cost: $2.45 (+$1.45 while watching, $3.00/h)
 ## What it shows
 
 - **5-hour and weekly limits**: how much of each you've used, and when each resets.
+- **Fable**: Fable's own weekly limit, which counts apart from the all-models weekly limit, and when it resets. Claude Code's plugin API doesn't carry this figure, so the panel asks the same claude.ai usage endpoint that `/usage` reads, with your session's login, at most every 5 minutes. On a plan without a Fable limit the row says so.
 - **Context**: how full this session's context window is.
-- **Graph**: all three over time, up to the last 5 hours. In the terminal it's drawn in braille characters; in the desktop app it's a line graph whose newest points pulse.
-- **Bonus stats**: how fast the 5-hour limit is filling (over the last 30 minutes), when you'd hit 100% at that pace or whether it resets first, how fast the context is growing, and what the session has cost.
+- **Graph**: all four over time, up to the last 5 hours. In the terminal it's drawn in braille characters; in the desktop app it's a line graph whose newest points pulse.
+- **Bonus stats**: how fast the 5-hour limit is filling (over the last 30 minutes), when you'd hit 100% at that pace or whether it resets first, how fast the Fable weekly limit is filling (over the last hour) and when you'd hit it, how fast the context is growing, and what the session has cost.
 
-The panel reads the numbers Claude Code already has, on its own timer. It makes no model calls, so watching it doesn't use up your plan. The plan figures only change after Claude replies, so the lines stay flat while nothing is happening.
+The panel reads the numbers Claude Code already has, on its own timer, plus the Fable figure from the usage endpoint. It makes no model calls, so watching it doesn't use up your plan. The plan figures only change after Claude replies, so the lines stay flat while nothing is happening.
 
 ## Install
 

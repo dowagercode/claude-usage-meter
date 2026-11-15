@@ -7,18 +7,66 @@ const PANE = 'usage-meter'
 const TITLE = 'Usage'
 const EVERY_MS = 60_000
 const KEEP = 300 // samples kept: 5 hours at one a minute
+const FABLE_EVERY_MS = 5 * 60_000 // the usage endpoint is asked at most this often
+const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 
 const samples = atom({ plugin: 'usage-meter', key: 'samples' } as const, [] as Sample[], {
   shape: 'samples-1',
 })
 
-type Key = 'five' | 'week' | 'ctx'
-const KEYS: Key[] = ['week', 'ctx', 'five'] // drawn in this order, so the 5-hour line sits on top
-const COLORS: Record<Key, string> = { five: '#e07a4f', week: '#5b8def', ctx: '#3fae7a' }
+type Key = 'five' | 'week' | 'fable' | 'ctx'
+const KEYS: Key[] = ['week', 'fable', 'ctx', 'five'] // drawn in this order, so the 5-hour line sits on top
+const COLORS: Record<Key, string> = { five: '#e07a4f', week: '#5b8def', fable: '#a77bd8', ctx: '#3fae7a' }
 
-async function takeSample($: EngineInterface) {
+// Fable's weekly window is not in $.session.usage(), which carries only the 5-hour and
+// all-models weekly windows. /usage reads it from the claude.ai usage endpoint, as one of
+// the `limits[]` rows of kind `weekly_scoped` named for a model; so does this.
+type Fable = { pct?: number; reset?: string; note?: string }
+let fable: Fable = {}
+let fableAt = -Infinity
+
+export function fableFrom(body: any): Fable {
+  const rows: any[] = Array.isArray(body?.limits) ? body.limits : []
+  const row = rows.find(
+    r => r?.kind === 'weekly_scoped' && /fable/i.test(String(r?.scope?.model?.display_name ?? '')),
+  )
+  const raw = row ?? body?.seven_day_fable
+  if (!raw) return { note: 'no Fable limit on this plan' }
+  const v = typeof raw.percent === 'number' ? raw.percent : raw.utilization
+  const r = raw.resets_at
+  return {
+    pct: typeof v === 'number' ? Math.round(v * 10) / 10 : undefined,
+    reset: typeof r === 'number' ? new Date(r * 1000).toISOString() : typeof r === 'string' ? r : undefined,
+  }
+}
+
+async function readFable($: EngineInterface, t: number, force = false) {
+  if (!force && t - fableAt < FABLE_EVERY_MS) return
+  fableAt = t
+  try {
+    const auth = await $.session.authorize()
+    if (!auth) {
+      fable = { note: 'needs a claude.ai login' }
+      return
+    }
+    const res = await $.http.fetch(USAGE_URL, {
+      auth: auth.handle,
+      headers: { 'anthropic-beta': 'oauth-2025-04-20', accept: 'application/json' },
+    })
+    if (!res.ok) {
+      fable = { ...fable, note: `usage endpoint answered ${res.status}` }
+      return
+    }
+    fable = fableFrom(JSON.parse(res.text))
+  } catch (err) {
+    fable = { ...fable, note: `couldn't read: ${String(err).slice(0, 60)}` }
+  }
+}
+
+async function takeSample($: EngineInterface, force = false) {
   const u = await $.session.usage()
   const t = await $.clock.now()
+  await readFable($, t, force)
   const five = u.rateLimits.find(r => r.kind === 'five_hour')
   const week = u.rateLimits.find(r => r.kind === 'seven_day')
   const s: Sample = {
@@ -27,6 +75,9 @@ async function takeSample($: EngineInterface) {
     week: week?.percentUsed,
     fiveReset: five?.resetsAt,
     weekReset: week?.resetsAt,
+    fable: fable.pct,
+    fableReset: fable.reset,
+    fableNote: fable.pct === undefined ? fable.note : undefined,
     ctx: u.context.percent,
     ctxWindow: u.context.window,
     usd: u.cost?.usd,
@@ -78,6 +129,18 @@ function rate(list: Sample[], key: Key, spanMs: number) {
   return (((last[key] as number) - (first[key] as number)) / dt) * 3_600_000
 }
 
+function runwayOf(r: number | undefined, used: number | undefined, reset: string | undefined, now: number, over: string) {
+  if (r === undefined || used === undefined) return 'not enough data yet'
+  if (r <= 0.05) return `flat: no use in the last ${over}`
+  const hrs = (100 - used) / r
+  const resetMs = reset ? Date.parse(reset) - now : Infinity
+  if (hrs * 3_600_000 > resetMs) return `safe: resets before you'd hit 100%`
+  const d = Math.floor(hrs / 24)
+  const h = Math.floor(hrs % 24)
+  const m = Math.round((hrs - Math.floor(hrs)) * 60)
+  return `hits 100% in about ${d > 0 ? `${d}d ` : ''}${h}h${d > 0 ? '' : ` ${m}m`} at this pace`
+}
+
 function signed(v: number | undefined, unit: string) {
   return v === undefined ? '–' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}${unit}`
 }
@@ -85,7 +148,7 @@ function signed(v: number | undefined, unit: string) {
 // The time span and value range both graphs share.
 function frame(list: Sample[], now: number) {
   const span = Math.max(10 * 60_000, now - (list[0]?.t ?? now))
-  const vals = list.flatMap(s => [s.five, s.week, s.ctx]).filter((v): v is number => v !== undefined)
+  const vals = list.flatMap(s => [s.five, s.week, s.fable, s.ctx]).filter((v): v is number => v !== undefined)
   const top = Math.max(10, Math.ceil((Math.max(0, ...vals) * 1.25) / 10) * 10)
   const mins = Math.round(span / 60_000)
   const label = mins >= 60 ? `-${Math.floor(mins / 60)}h${mins % 60 ? ` ${mins % 60}m` : ''}` : `-${mins}m`
@@ -219,7 +282,7 @@ export const register: Register = on => {
 
   on('command.run', { command: 'usage-meter' }, async $ => {
     await $.ui.open({ id: PANE, title: TITLE })
-    await takeSample($)
+    await takeSample($, true)
     return { text: 'Usage panel opened.' }
   })
 
@@ -239,23 +302,15 @@ export const register: Register = on => {
     const now = last.t
 
     const r5 = rate(list, 'five', 30 * 60_000)
-    let runway = 'not enough data yet'
-    if (r5 !== undefined && last.five !== undefined) {
-      if (r5 <= 0.05) runway = 'flat: no use in the last 30 min'
-      else {
-        const hrs = (100 - last.five) / r5
-        const resetMs = last.fiveReset ? Date.parse(last.fiveReset) - now : Infinity
-        const h = Math.floor(hrs)
-        const m = Math.round((hrs - h) * 60)
-        runway =
-          hrs * 3_600_000 > resetMs ? `safe: resets before you'd hit 100%` : `hits 100% in about ${h}h ${m}m at this pace`
-      }
-    }
+    const runway = runwayOf(r5, last.five, last.fiveReset, now, '30 min')
+    // Fable is read every 5 minutes and moves slowly against a week, so its pace is taken over the last hour.
+    const rf = rate(list, 'fable', 60 * 60_000)
+    const fableRunway = runwayOf(rf, last.fable, last.fableReset, now, 'hour')
     const spent = last.usd !== undefined && first.usd !== undefined ? last.usd - first.usd : undefined
     const hours = (last.t - first.t) / 3_600_000
     const ctxTokens =
       last.ctx !== undefined && last.ctxWindow ? Math.round(((last.ctx / 100) * last.ctxWindow) / 1000) : undefined
-    const alt = `Usage over time: 5-hour ${pct(last.five)}, weekly ${pct(last.week)}, context ${pct(last.ctx)}`
+    const alt = `Usage over time: 5-hour ${pct(last.five)}, weekly ${pct(last.week)}, Fable weekly ${pct(last.fable)}, context ${pct(last.ctx)}`
 
     // The desktop, editor and phone draw an SVG; the terminal draws braille.
     let graph
@@ -293,6 +348,10 @@ export const register: Register = on => {
           </Text>
           <Text dimColor>   {until(last.weekReset, now)}</Text>
           <Text>
+            <Text color={COLORS.fable}>●</Text> Fable    {bar(last.fable)} <Text bold>{pct(last.fable)}</Text>
+          </Text>
+          <Text dimColor>   {last.fable === undefined ? (last.fableNote ?? 'no reading yet') : `weekly, ${until(last.fableReset, now)}`}</Text>
+          <Text>
             <Text color={COLORS.ctx}>●</Text> Context  {bar(last.ctx)} <Text bold>{pct(last.ctx)}</Text>
           </Text>
           <Text dimColor>   this session{ctxTokens !== undefined ? `, ~${ctxTokens}k tokens` : ''}</Text>
@@ -304,6 +363,8 @@ export const register: Register = on => {
           <Text bold>Bonus stats</Text>
           <Text>Burn rate (5-hour): {signed(r5, '% per hour')}</Text>
           <Text>Runway: {runway}</Text>
+          <Text>Fable burn rate (weekly): {signed(rf, '% per hour')}</Text>
+          <Text>Fable runway: {fableRunway}</Text>
           <Text>Context growth: {signed(rate(list, 'ctx', 30 * 60_000), '% per hour')}</Text>
           <Text>
             Session cost: {last.usd === undefined ? '–' : `$${last.usd.toFixed(2)}`}

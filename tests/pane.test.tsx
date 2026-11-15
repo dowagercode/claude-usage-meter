@@ -1,5 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
+import { fableFrom } from '../hooks/register'
+
 const PANE = {
   plugin: 'usage-meter',
   component: 'Pane',
@@ -19,6 +21,8 @@ const SAMPLES = Array.from({ length: 30 }, (_, i) => ({
   t: T0 + i * 60_000,
   five: 10 + i * 0.4,
   week: 2,
+  fable: 30 + i * 0.1,
+  fableReset: '2026-11-16T08:00:00Z',
   ctx: 5 + i * 0.2,
   usd: 1 + i * 0.05,
   fiveReset: '2026-11-11T02:00:00Z',
@@ -39,6 +43,28 @@ test('the terminal draws a braille graph', async ($, on) => {
   expect((await ui.find({ type: 'Text', text: /5-hour/ }))?.text).toMatch(/21\.6%/)
   expect((await ui.find({ type: 'Text', text: /Burn rate/ }))?.text).toMatch(/\+24\.0% per hour/)
   await ui.unmount()
+})
+
+test('Fable has its own row and pace', async ($, on) => {
+  seed(on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /Fable  / }))?.text).toMatch(/32\.9%/)
+  expect((await ui.find({ type: 'Text', text: /Fable burn rate/ }))?.text).toMatch(/\+6\.0% per hour/)
+  expect((await ui.find({ type: 'Text', text: /Fable runway/ }))?.text).toMatch(/hits 100% in about/)
+  await ui.unmount()
+})
+
+test('the usage endpoint answer gives the Fable window', () => {
+  const got = fableFrom({
+    five_hour: { utilization: 12, resets_at: '2026-11-15T20:00:00Z' },
+    limits: [
+      { kind: 'weekly', percent: 40 },
+      { kind: 'weekly_scoped', scope: { model: { display_name: 'Fable' } }, percent: 57.25, resets_at: 1794816000 },
+    ],
+  })
+  expect(got.pct).toBe(57.3)
+  expect(got.reset).toBe(new Date(1794816000 * 1000).toISOString())
+  expect(fableFrom({ limits: [] }).note).toBe('no Fable limit on this plan')
 })
 
 test('the desktop draws an SVG graph', async ($, on) => {

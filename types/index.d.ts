@@ -6,6 +6,11 @@ export type Sample = {
   usd?: number
   fiveReset?: string
   weekReset?: string
+  /** Fable's own weekly window, 0 to 100, read from the usage endpoint. */
+  fable?: number
+  fableReset?: string
+  /** Why there is no Fable reading, when there is none. */
+  fableNote?: string
   ctxWindow?: number
 }
 
